@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Long Vowel Head Tilt Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f0f9ff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1rem;
+        }
+
+        #video-container {
+            position: relative;
+            width: 320px; 
+            height: 240px;
+            border-radius: 1.5rem;
+            overflow: hidden;
+            border: 6px solid #3b82f6;
+            background: #1e293b;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        video {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .face-guide {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 55%;
+            height: 65%;
+            border: 3px dashed rgba(255, 255, 255, 0.4);
+            border-radius: 50% 50% 40% 40%;
+            pointer-events: none;
+        }
+
+        .tilt-indicator {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            padding: 1rem;
+            font-size: 2rem;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            opacity: 0.1;
+            transition: all 0.2s ease;
+            z-index: 10;
+        }
+
+        .tilt-active {
+            opacity: 1;
+            transform: translateY(-50%) scale(1.2);
+            background: #4ade80;
+            box-shadow: 0 0 20px rgba(74, 222, 128, 0.6);
+        }
+
+        .feedback-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 8rem;
+            pointer-events: none;
+            z-index: 100;
+            display: none;
+            background-color: rgba(255, 255, 255, 0.85);
+            transition: background-color 0.3s ease;
+        }
+
+        .game-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 2rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            text-align: center;
+            width: 100%;
+            max-width: 700px;
+        }
+
+        .choice-box {
+            flex: 1;
+            margin: 0 8px;
+            padding: 1.5rem 1rem;
+            border-radius: 1.5rem;
+            transition: all 0.2s;
+            border: 4px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 160px;
+            cursor: pointer;
+        }
+
+        .choice-box.active-selection {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+            transform: scale(1.03);
+        }
+
+        .word-text {
+            font-size: 3rem;
+            font-weight: 900;
+            color: #1e40af;
+            text-transform: uppercase;
+        }
+
+        .loading-screen {
+            position: fixed;
+            inset: 0;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 200;
+        }
+
+        .star {
+            position: absolute;
+            font-size: 3rem;
+            pointer-events: none;
+            z-index: 150;
+            animation: burst 1s ease-out forwards;
+        }
+
+        @keyframes burst {
+            0% { transform: translate(0, 0) scale(0) rotate(0deg); opacity: 1; }
+            100% { transform: translate(var(--tw-tx), var(--tw-ty)) scale(1.5) rotate(var(--tw-tr)); opacity: 0; }
+        }
+
+        .custom-btn {
+            transition: all 0.2s ease;
+            transform: translateY(0);
+        }
+        .custom-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        }
+        .custom-btn:active {
+            transform: translateY(1px);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading" class="loading-screen">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-4"></div>
+        <p class="text-xl font-bold text-blue-600">Starting Tracker Engine...</p>
+        <p class="text-gray-400 text-sm mt-2">Please allow camera access in your browser.</p>
+    </div>
+
+    <div class="feedback-overlay" id="feedback">
+        <div id="feedback-emoji">✅</div>
+        <div id="feedback-text" class="text-4xl font-black mt-4"></div>
+    </div>
+    
+    <div id="star-container" class="fixed inset-0 pointer-events-none"></div>
+
+    <div class="w-full max-w-4xl flex flex-col items-center">
+        
+        <div id="screen-start" class="w-full flex flex-col items-center">
+            <div class="text-center mb-6">
+                <h1 class="text-5xl font-black text-blue-600 tracking-tight drop-shadow-sm">⭐ Vowel Tilt Quest! ⭐</h1>
+                <p class="text-gray-500 text-lg mt-2 font-semibold">Fun head-tilting phonics game for young learners</p>
+            </div>
+
+            <div class="mb-8 flex flex-col items-center">
+                <div id="video-container" class="border-blue-400">
+                    <video id="input_video" autoplay playsinline></video>
+                    <div class="face-guide"></div>
+                    <div id="tilt-left" class="tilt-indicator left-2">⬅️</div>
+                    <div id="tilt-right" class="tilt-indicator right-2">➡️</div>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">Make sure your face is visible inside the circle!</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-3xl shadow-lg w-full max-w-lg text-center">
+                <h2 class="text-2xl font-bold text-gray-700 mb-4">Choose Your Level</h2>
+                <div class="grid grid-cols-2 gap-4">
+                    <button onclick="selectLevel(1)" class="custom-btn bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xl py-4 px-6 rounded-2xl shadow-md">
+                        Level 1 🟢
+                        <span class="block text-xs font-normal mt-1 text-emerald-100">Relaxed Learning</span>
+                    </button>
+                    <button onclick="selectLevel(2)" class="custom-btn bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xl py-4 px-6 rounded-2xl shadow-md">
+                        Level 2 ⚡
+                        <span class="block text-xs font-normal mt-1 text-amber-100">Speed Challenge</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="screen-intro" class="w-full max-w-lg hidden">
+            <div class="bg-white p-8 rounded-3xl shadow-xl text-center border-4 border-blue-100">
+                <div id="intro-icon" class="text-6xl mb-4">🟢</div>
+                <h2 id="intro-title" class="text-3xl font-black text-blue-600 mb-4">Level 1 Introduction</h2>
+                <p id="intro-desc" class="text-gray-600 text-lg leading-relaxed font-semibold mb-8">
+                    Tilt your head LEFT or RIGHT to choose the correct long vowel word. Take your time and enjoy learning!
+                </p>
+                <div class="flex flex-col gap-3">
+                    <button onclick="startGame()" class="custom-btn bg-blue-600 hover:bg-blue-700 text-white font-black text-2xl py-4 px-8 rounded-2xl shadow-lg">
+                        PLAY GAME! 🚀
+                    </button>
+                    <button onclick="showStartScreen()" class="text-gray-500 hover:text-gray-700 font-bold text-sm">
+                        Go Back
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="screen-playing" class="w-full flex flex-col items-center hidden">
+            <div class="w-full max-w-3xl flex justify-between items-center mb-4 px-4">
+                <div class="bg-white px-4 py-2 rounded-2xl shadow-sm border-2 border-blue-500 text-sm font-bold text-gray-700">
+                    Question: <span id="current-question-num" class="text-blue-600">1</span>/10
+                </div>
+                <div class="bg-white px-4 py-2 rounded-2xl shadow-sm border-2 border-orange-400 text-sm font-bold text-gray-700">
+                    Score: <span id="score" class="text-orange-500">0</span>
+                </div>
+            </div>
+
+            <div id="timer-wrapper" class="w-full max-w-xl h-4 bg-gray-200 rounded-full mb-4 overflow-hidden hidden">
+                <div id="timer-bar" class="h-full bg-red-500 transition-all duration-100 ease-linear" style="width: 100%;"></div>
+            </div>
+
+            <div class="text-center mb-4">
+                <h2 id="question-text" class="text-3xl font-black text-gray-800">WHICH IS LONG VOWEL A?</h2>
+            </div>
+
+            <div id="active-video-target" class="mb-4">
+                </div>
+
+            <div class="game-card mt-2">
+                <div class="flex justify-between w-full">
+                    <div id="box-left" class="choice-box" onclick="checkAnswer('left')">
+                        <span class="text-xs font-bold text-gray-400 mb-2 uppercase tracking-widest">Tilt Left ⬅️</span>
+                        <div id="word-left" class="word-text">---</div>
+                    </div>
+
+                    <div id="box-right" class="choice-box" onclick="checkAnswer('right')">
+                        <span class="text-xs font-bold text-gray-400 mb-2 uppercase tracking-widest">Tilt Right ➡️</span>
+                        <div id="word-right" class="word-text">---</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="screen-results" class="w-full max-w-3xl hidden">
+            <div class="bg-white p-8 rounded-3xl shadow-2xl border-4 border-blue-200">
+                <div class="text-center mb-6">
+                    <h2 class="text-4xl font-black text-blue-600">🎉 Game Finished! 🎉</h2>
+                    <p class="text-gray-500 mt-1 font-semibold">Here is how well you did today:</p>
+                </div>
+
+                <div class="grid grid-cols-3 gap-4 mb-8">
+                    <div class="bg-orange-50 border-2 border-orange-200 p-4 rounded-2xl text-center">
+                        <span class="block text-gray-500 text-sm uppercase tracking-wider font-bold">Total Score</span>
+                        <span id="final-score" class="text-4xl font-black text-orange-500">0</span>
+                    </div>
+                    <div class="bg-green-50 border-2 border-green-200 p-4 rounded-2xl text-center">
+                        <span class="block text-gray-500 text-sm uppercase tracking-wider font-bold">Correct ✅</span>
+                        <span id="final-correct" class="text-4xl font-black text-green-500">0</span>
+                    </div>
+                    <div class="bg-red-50 border-2 border-red-200 p-4 rounded-2xl text-center">
+                        <span class="block text-gray-500 text-sm uppercase tracking-wider font-bold">Incorrect ❌</span>
+                        <span id="final-incorrect" class="text-4xl font-black text-red-500">0</span>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-gray-50 p-5 rounded-2xl border border-gray-200">
+                        <h3 class="text-lg font-black text-gray-700 mb-3 border-b pb-2 flex items-center gap-2">
+                            <span>🏆</span> Correct Words List
+                        </h3>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <span class="text-xs font-bold text-blue-500 uppercase tracking-widest block mb-1">Long Vowel A</span>
+                                <ul id="results-correct-a" class="space-y-1 text-sm font-semibold text-gray-700 max-h-40 overflow-y-auto">
+                                    </ul>
+                            </div>
+                            <div>
+                                <span class="text-xs font-bold text-purple-500 uppercase tracking-widest block mb-1">Long Vowel I</span>
+                                <ul id="results-correct-i" class="space-y-1 text-sm font-semibold text-gray-700 max-h-40 overflow-y-auto">
+                                    </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-rose-50 p-5 rounded-2xl border border-rose-100 flex flex-col justify-between">
+                        <div>
+                            <h3 class="text-lg font-black text-rose-700 mb-3 border-b border-rose-200 pb-2 flex items-center gap-2">
+                                <span>📖</span> Practice list
+                            </h3>
+                            <ul id="results-incorrect-words" class="flex flex-wrap gap-2 text-sm font-bold max-h-40 overflow-y-auto">
+                                </ul>
+                        </div>
+                        <div id="practice-suggestion-box" class="mt-4 text-center hidden">
+                            <p class="text-rose-600 font-extrabold text-base mb-1 animate-bounce">
+                                💡 Let’s practice these words again!
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-center">
+                    <button onclick="showStartScreen()" class="custom-btn bg-blue-600 hover:bg-blue-700 text-white font-black text-xl py-4 px-10 rounded-2xl shadow-lg">
+                        Play Again! 🔄
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Web Audio API Synthesizer (Bulletproof offline SFX generator) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); 
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); 
+                gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + 0.35);
+            } else if (type === 'incorrect') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(220, audioCtx.currentTime); 
+                osc.frequency.linearRampToValueAtTime(110, audioCtx.currentTime + 0.25); 
+                gainNode.gain.setValueAtTime(0.35, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + 0.3);
+            } else if (type === 'timeout') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start(audioCtx.currentTime);
+                osc.stop(audioCtx.currentTime + 0.4);
+            } else if (type === 'celebrate') {
+                const now = audioCtx.currentTime;
+                const freqs = [523.25, 659.25, 783.99, 1046.50]; 
+                freqs.forEach((freq, idx) => {
+                    const o = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    o.type = 'triangle';
+                    o.frequency.setValueAtTime(freq, now + idx * 0.08);
+                    g.gain.setValueAtTime(0.2, now + idx * 0.08);
+                    g.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.08 + 0.4);
+                    o.connect(g);
+                    g.connect(audioCtx.destination);
+                    o.start(now + idx * 0.08);
+                    o.stop(now + idx * 0.08 + 0.45);
+                });
+            }
+        }
+
+        // --- Game Setup / States ---
+        const videoElement = document.getElementById('input_video');
+        const videoContainer = document.getElementById('video-container');
+        const activeVideoTarget = document.getElementById('active-video-target');
+        
+        const scoreElement = document.getElementById('score');
+        const currentQuestionNumElement = document.getElementById('current-question-num');
+        const questionElement = document.getElementById('question-text');
+        
+        const wordLeft = document.getElementById('word-left');
+        const wordRight = document.getElementById('word-right');
+        const boxLeft = document.getElementById('box-left');
+        const boxRight = document.getElementById('box-right');
+        
+        const feedbackOverlay = document.getElementById('feedback');
+        const feedbackEmoji = document.getElementById('feedback-emoji');
+        const feedbackText = document.getElementById('feedback-text');
+        const loadingElement = document.getElementById('loading');
+        const starContainer = document.getElementById('star-container');
+
+        const timerWrapper = document.getElementById('timer-wrapper');
+        const timerBar = document.getElementById('timer-bar');
+
+        const tiltLeftUI = document.getElementById('tilt-left');
+        const tiltRightUI = document.getElementById('tilt-right');
+
+        let score = 0;
+        let isProcessing = false;
+        let targetVowel = 'A';
+        let correctSide = 'left';
+        let selectedLevel = 1;
+        let currentGameScreen = 'start';
+        
+        let questionIndex = 0;
+        const totalQuestions = 10;
+        
+        let level2Timer = null;
+        const timerDuration = 8000; 
+
+        let correctCount = 0;
+        let incorrectCount = 0;
+        let correctAWords = [];
+        let correctIWords = [];
+        let incorrectWords = [];
+
+        // Hysteresis threshold variables for tracking tilts smoothly
+        let tiltHoldCounter = 0;
+        const REQUIRED_HOLD_FRAMES = 8; // Must stay tilted for 8 frames to submit
+
+        const vowelGroups = {
+            'A': ['cake', 'bake', 'race', 'game', 'cape', 'came', 'lake', 'name', 'gate', 'date', 'tape', 'wave', 'fame'],
+            'I': ['bike', 'kite', 'bite', 'pile', 'nine', 'time', 'line', 'ride', 'five', 'ripe', 'hide', 'pipe']
+        };
+
+        // --- Visual Stars Popups ---
+        function createStars() {
+            const starCount = 18;
+            for (let i = 0; i < starCount; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.innerHTML = '⭐';
+                const angle = (Math.PI * 2 * i) / starCount;
+                const distance = 160 + Math.random() * 250;
+                star.style.setProperty('--tw-tx', Math.cos(angle) * distance + 'px');
+                star.style.setProperty('--tw-ty', Math.sin(angle) * distance + 'px');
+                star.style.setProperty('--tw-tr', (Math.random() * 360) + 'deg');
+                star.style.left = '50%';
+                star.style.top = '50%';
+                starContainer.appendChild(star);
+                setTimeout(() => star.remove(), 1000);
+            }
+        }
+
+        // --- Screen Switching Management ---
+        function showStartScreen() {
+            stopTimer();
+            currentGameScreen = 'start';
+            videoContainer.appendChild(videoElement);
+            videoContainer.appendChild(document.querySelector('.face-guide'));
+            videoContainer.appendChild(tiltLeftUI);
+            videoContainer.appendChild(tiltRightUI);
+
+            document.getElementById('screen-start').classList.remove('hidden');
+            document.getElementById('screen-intro').classList.add('hidden');
+            document.getElementById('screen-playing').classList.add('hidden');
+            document.getElementById('screen-results').classList.add('hidden');
+        }
+
+        function selectLevel(levelNum) {
+            selectedLevel = levelNum;
+            currentGameScreen = 'intro';
+            document.getElementById('screen-start').classList.add('hidden');
+            document.getElementById('screen-intro').classList.remove('hidden');
+
+            const introIcon = document.getElementById('intro-icon');
+            const introTitle = document.getElementById('intro-title');
+            const introDesc = document.getElementById('intro-desc');
+
+            if (levelNum === 1) {
+                introIcon.innerText = "🟢";
+                introTitle.innerText = "Level 1: Relaxed Mode";
+                introDesc.innerText = "Tilt your head LEFT or RIGHT to choose the correct long vowel word.\n\nTake your time and enjoy learning!";
+            } else {
+                introIcon.innerText = "⚡";
+                introTitle.innerText = "Level 2: Speed Challenge";
+                introDesc.innerText = "You only have 8 seconds to answer each challenge!\n\nBe fast and accurate!";
+            }
+        }
+
+        function startGame() {
+            score = 0;
+            questionIndex = 0;
+            correctCount = 0;
+            incorrectCount = 0;
+            correctAWords = [];
+            correctIWords = [];
+            incorrectWords = [];
+
+            scoreElement.innerText = "0";
+            activeVideoTarget.appendChild(videoContainer);
+            
+            currentGameScreen = 'playing';
+            document.getElementById('screen-intro').classList.add('hidden');
+            document.getElementById('screen-playing').classList.remove('hidden');
+
+            if (selectedLevel === 2) {
+                timerWrapper.classList.remove('hidden');
+            } else {
+                timerWrapper.classList.add('hidden');
+            }
+
+            nextQuestion();
+        }
+
+        function nextQuestion() {
+            if (questionIndex >= totalQuestions) {
+                endGame();
+                return;
+            }
+
+            questionIndex++;
+            currentQuestionNumElement.innerText = questionIndex;
+
+            boxLeft.classList.remove('active-selection');
+            boxRight.classList.remove('active-selection');
+
+            targetVowel = Math.random() > 0.5 ? 'A' : 'I';
+            const alternativeVowel = targetVowel === 'A' ? 'I' : 'A';
+            
+            questionElement.innerHTML = `WHICH IS LONG VOWEL <span class="text-blue-600 underline">${targetVowel}</span>?`;
+            
+            correctSide = Math.random() > 0.5 ? 'left' : 'right';
+            
+            const correctWord = vowelGroups[targetVowel][Math.floor(Math.random() * vowelGroups[targetVowel].length)];
+            const wrongWord = vowelGroups[alternativeVowel][Math.floor(Math.random() * vowelGroups[alternativeVowel].length)];
+
+            if (correctSide === 'left') {
+                wordLeft.innerText = correctWord;
+                wordRight.innerText = wrongWord;
+            } else {
+                wordLeft.innerText = wrongWord;
+                wordRight.innerText = correctWord;
+            }
+            
+            tiltHoldCounter = 0;
+            isProcessing = false;
+
+            if (selectedLevel === 2) {
+                startTimer();
+            }
+        }
+
+        // --- Challenge Timer Logic (Level 2) ---
+        function startTimer() {
+            stopTimer();
+            let startTime = Date.now();
+            timerBar.style.width = '100%';
+            timerBar.style.backgroundColor = '#4ade80';
+
+            level2Timer = setInterval(() => {
+                let elapsed = Date.now() - startTime;
+                let percentLeft = Math.max(0, 100 - (elapsed / timerDuration) * 100);
+                
+                timerBar.style.width = `${percentLeft}%`;
+
+                if (percentLeft > 50) {
+                    timerBar.style.backgroundColor = '#4ade80'; 
+                } else if (percentLeft > 25) {
+                    timerBar.style.backgroundColor = '#f59e0b'; 
+                } else {
+                    timerBar.style.backgroundColor = '#ef4444'; 
+                }
+
+                if (elapsed >= timerDuration) {
+                    stopTimer();
+                    handleTimeout();
+                }
+            }, 100);
+        }
+
+        function stopTimer() {
+            if (level2Timer) {
+                clearInterval(level2Timer);
+                level2Timer = null;
+            }
+        }
+
+        function handleTimeout() {
+            if (isProcessing) return;
+            isProcessing = true;
+
+            playSound('timeout');
+
+            incorrectCount++;
+            const wrongWord = correctSide === 'left' ? wordLeft.innerText : wordRight.innerText;
+            incorrectWords.push(wrongWord);
+
+            feedbackEmoji.innerText = "⏰";
+            feedbackText.innerText = "Time's Up!";
+            feedbackOverlay.style.display = 'flex';
+            feedbackOverlay.style.color = '#ef4444';
+
+            setTimeout(() => {
+                feedbackOverlay.style.display = 'none';
+                nextQuestion();
+            }, 1500);
+        }
+
+        // --- Scoring and Answer Verification ---
+        function checkAnswer(chosenSide) {
+            if (isProcessing) return;
+            isProcessing = true;
+            stopTimer();
+
+            const win = (chosenSide === correctSide);
+            const activeWord = (correctSide === 'left') ? wordLeft.innerText : wordRight.innerText;
+
+            if (chosenSide === 'left') boxLeft.classList.add('active-selection');
+            else boxRight.classList.add('active-selection');
+
+            feedbackOverlay.style.display = 'flex';
+
+            if (win) {
+                correctCount++;
+                let earnedPoints = 10; 
+                if (selectedLevel === 1) {
+                    earnedPoints = Math.floor(Math.random() * 5) + 1; 
+                }
+
+                score += earnedPoints;
+                scoreElement.innerText = score;
+
+                if (targetVowel === 'A') {
+                    correctAWords.push(activeWord);
+                } else {
+                    correctIWords.push(activeWord);
+                }
+
+                feedbackEmoji.innerText = "✅";
+                feedbackText.innerText = `Great Job! +${earnedPoints}`;
+                feedbackOverlay.style.color = '#4ade80';
+                
+                playSound('correct');
+                createStars();
+            } else {
+                incorrectCount++;
+                incorrectWords.push(activeWord);
+
+                feedbackEmoji.innerText = "❌";
+                feedbackText.innerText = "Try Again!";
+                feedbackOverlay.style.color = '#f87171';
+                
+                playSound('incorrect');
+            }
+
+            setTimeout(() => {
+                feedbackOverlay.style.display = 'none';
+                nextQuestion();
+            }, 1500);
+        }
+
+        // --- Game End & Results Preparation ---
+        function endGame() {
+            stopTimer();
+            playSound('celebrate');
+            currentGameScreen = 'results';
+
+            document.getElementById('screen-playing').classList.add('hidden');
+            document.getElementById('screen-results').classList.remove('hidden');
+
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('final-correct').innerText = correctCount;
+            document.getElementById('final-incorrect').innerText = incorrectCount;
+
+            const correctAList = document.getElementById('results-correct-a');
+            correctAList.innerHTML = "";
+            if (correctAWords.length > 0) {
+                correctAWords.forEach(w => {
+                    correctAList.innerHTML += `<li class="bg-blue-50 text-blue-800 px-3 py-1 rounded-lg text-xs capitalize">⭐ ${w}</li>`;
+                });
+            } else {
+                correctAList.innerHTML = `<span class="text-xs text-gray-400 italic">None yet</span>`;
+            }
+
+            const correctIList = document.getElementById('results-correct-i');
+            correctIList.innerHTML = "";
+            if (correctIWords.length > 0) {
+                correctIWords.forEach(w => {
+                    correctIList.innerHTML += `<li class="bg-purple-50 text-purple-800 px-3 py-1 rounded-lg text-xs capitalize">⭐ ${w}</li>`;
+                });
+            } else {
+                correctIList.innerHTML = `<span class="text-xs text-gray-400 italic">None yet</span>`;
+            }
+
+            const incorrectList = document.getElementById('results-incorrect-words');
+            incorrectList.innerHTML = "";
+            const suggestionBox = document.getElementById('practice-suggestion-box');
+            if (incorrectWords.length > 0) {
+                incorrectWords.forEach(w => {
+                    incorrectList.innerHTML += `<li class="bg-rose-100 text-rose-800 px-3 py-1 rounded-lg text-xs capitalize">${w}</li>`;
+                });
+                suggestionBox.classList.remove('hidden');
+            } else {
+                incorrectList.innerHTML = `<span class="text-xs text-gray-400 italic">Perfect score! No words to practice.</span>`;
+                suggestionBox.classList.add('hidden');
+            }
+        }
+
+        // ======================================================================
+        // --- ADDED: MEDIAPIPE FACE MESH TRACKING ENGINE ---
+        // ======================================================================
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
+
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: false,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults((results) => {
+            // Remove loading interface once tracking ticks over successfully
+            if (loadingElement.style.display !== 'none') {
+                loadingElement.style.display = 'none';
+            }
+
+            // If no face found, drop UI active status classes
+            if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+                tiltLeftUI.classList.remove('tilt-active');
+                tiltRightUI.classList.remove('tilt-active');
+                return;
+            }
+
+            const landmarks = results.multiFaceLandmarks[0];
+
+            // Use robust tracking facial references:
+            // Landmark 4: Tip of Nose
+            // Landmark 152: Chin Point
+            // Landmark 10: Center top Forehead
+            const nose = landmarks[4];
+            const chin = landmarks[152];
+
+            // Because our camera output is mirrored visually using `transform: scaleX(-1)`,
+            // MediaPipe raw x-coordinates are inverted relative to reality.
+            // Calculate delta angle between horizontal axis of nose vs vertical head plane
+            const dx = chin.x - nose.x;
+            const dy = chin.y - nose.y;
+            
+            // Convert vector mapping ratio to degrees tilt offset
+            const angle = Math.atan2(dx, dy) * (180 / Math.PI);
+
+            // Establish strict threshold boundaries (e.g. 7 degrees offset minimum)
+            const TILT_THRESHOLD = 7.0;
+
+            if (angle < - TILT_THRESHOLD) {
+                // Head is tilted left
+                tiltLeftUI.classList.add('tilt-active');
+                tiltRightUI.classList.remove('tilt-active');
+
+                if (currentGameScreen === 'playing' && !isProcessing) {
+                    tiltHoldCounter++;
+                    if (tiltHoldCounter >= REQUIRED_HOLD_FRAMES) {
+                        checkAnswer('left');
+                    }
+                }
+            } else if (angle >TILT_THRESHOLD) {
+                // Head is tilted right
+                tiltRightUI.classList.add('tilt-active');
+                tiltLeftUI.classList.remove('tilt-active');
+
+                if (currentGameScreen === 'playing' && !isProcessing) {
+                    tiltHoldCounter++;
+                    if (tiltHoldCounter >= REQUIRED_HOLD_FRAMES) {
+                        checkAnswer('right');
+                    }
+                }
+            } else {
+                // Head centered
+                tiltLeftUI.classList.remove('tilt-active');
+                tiltRightUI.classList.remove('tilt-active');
+                if (currentGameScreen === 'playing') {
+                    tiltHoldCounter = 0; // Reset counter if they straighten up
+                }
+            }
+        });
+
+        // Instantiate and chain local camera utils to pipe raw capture feed frames directly into MediaPipe instance
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await faceMesh.send({ image: videoElement });
+            },
+            width: 320,
+            height: 240
+        });
+        
+        camera.start().catch(err => {
+            console.error("Camera initialisation crash:", err);
+            document.querySelector('#loading p').innerText = "Camera Access Blocked / Missing!";
+        });
+    </script>
+</body>
+</html>
